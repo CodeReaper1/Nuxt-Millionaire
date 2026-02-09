@@ -7,9 +7,16 @@ const { query } = useRoute();
 const { cart, isUpdatingCart, paymentGateways, emptyCart, refreshCart } = useCart();
 const { customer, viewer, navigateToLogin } = useAuth();
 const { orderInput, isProcessingOrder, processCheckout } = useCheckout();
+const { selectedOffice, isEcontShippingMethod, getCheckoutMetaData } = useEcont();
 const runtimeConfig = useRuntimeConfig();
 const appConfig = useAppConfig();
 const stripeKey = runtimeConfig.public?.STRIPE_PUBLISHABLE_KEY || null;
+
+// Econt: detect when an Econt shipping method is chosen
+const isEcontSelected = computed(() => {
+  const chosen = cart.value?.chosenShippingMethods?.[0];
+  return isEcontShippingMethod(chosen);
+});
 
 const buttonText = ref<string>(isProcessingOrder.value ? t('general.processing') : t('shop.checkoutButton'));
 const isStripeElementReady = ref<boolean>(false);
@@ -21,6 +28,11 @@ const isCheckoutDisabled = computed<boolean>(() => {
   // Check if Stripe is selected and element is not ready
   if (orderInput.value.paymentMethod?.id === 'stripe') {
     return !isStripeElementReady.value;
+  }
+
+  // Econt: require an office to be selected before checkout
+  if (isEcontSelected.value && !selectedOffice.value) {
+    return true;
   }
 
   return false;
@@ -394,6 +406,11 @@ useSeoMeta({
               v-if="cart.availableShippingMethods[0]?.rates && cart.chosenShippingMethods?.[0]"
               :options="cart.availableShippingMethods[0].rates"
               :active-option="cart.chosenShippingMethods[0]" />
+          </div>
+
+          <!-- Econt office selector (shown when Econt shipping is chosen) -->
+          <div v-if="isEcontSelected">
+            <EcontOfficeSelector v-model="selectedOffice" />
           </div>
 
           <hr class="border-gray-300 dark:border-gray-600" />

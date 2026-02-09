@@ -23,11 +23,16 @@ export function useCheckout() {
     const billing = billingSource;
     const shipping = shipToDifferentAddress ? shippingSource : billingSource;
 
+    // Merge Econt office data into metaData when an Econt office is selected.
+    const { getCheckoutMetaData } = useEcont();
+    const econtMeta = getCheckoutMetaData();
+    const mergedMetaData = [...(orderInput.value.metaData || []), ...econtMeta];
+
     const payload: CheckoutInput = {
       billing,
       shipping,
       shippingMethod: cart.value?.chosenShippingMethods,
-      metaData: orderInput.value.metaData,
+      metaData: mergedMetaData,
       paymentMethod: orderInput.value.paymentMethod.id,
       customerNote: orderInput.value.customerNote,
       shipToDifferentAddress,

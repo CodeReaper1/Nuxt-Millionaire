@@ -1,0 +1,20 @@
+mutation SaveEcontOffice(
+  $orderId: Int!
+  $officeCode: String!
+  $officeName: String
+  $officeAddress: String
+  $officeCity: String
+) {
+  saveEcontOfficeToOrder(
+    input: {
+      orderId: $orderId
+      officeCode: $officeCode
+      officeName: $officeName
+      officeAddress: $officeAddress
+      officeCity: $officeCity
+    }
+  ) {
+    success
+    message
+  }
+}
