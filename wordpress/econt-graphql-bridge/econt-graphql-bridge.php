@@ -90,7 +90,7 @@ final class Econt_GraphQL_Bridge {
         }
 
         // Bulgarisation for WooCommerce — the main class shipped by the plugin.
-        if ( ! class_exists( 'Woo_BG' ) && ! defined( 'WOO_BG_VERSION' ) ) {
+        if ( ! $this->is_bulgarisation_active() ) {
             $missing[] = 'Bulgarisation for WooCommerce';
         }
 
