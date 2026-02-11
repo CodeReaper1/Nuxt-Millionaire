@@ -1,3 +1,76 @@
+    <section>
+      <h2>Debug: GraphQL direct requests</h2>
+      <button @click="debugCities">Log: econtCities</button>
+      <button @click="debugOffices">Log: econtOffices (selected city)</button>
+      <button @click="debugCalculate">Log: econtCalculateShipping</button>
+      <button @click="debugSaveOffice">Log: saveEcontOfficeToOrder</button>
+      <pre style="background:#f7f7f7;padding:8px;max-height:240px;overflow:auto">{{ debugLog }}</pre>
+    </section>
+const debugLog = ref('')
+
+async function debugCities() {
+  debugLog.value = 'Loading...'
+  const q = `query { econtCities { id name postCode regionName } }`
+  try {
+    const res = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q })
+    })
+    const js = await res.json()
+    debugLog.value = JSON.stringify(js, null, 2)
+  } catch (e) {
+    debugLog.value = String(e)
+  }
+}
+
+async function debugOffices() {
+  debugLog.value = 'Loading...'
+  const q = `query($city:String){ econtOffices(city:$city){ id code name address city postCode latitude longitude } }`
+  try {
+    const res = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, variables: { city: selectedCity.value || '' } })
+    })
+    const js = await res.json()
+    debugLog.value = JSON.stringify(js, null, 2)
+  } catch (e) {
+    debugLog.value = String(e)
+  }
+}
+
+async function debugCalculate() {
+  debugLog.value = 'Loading...'
+  const q = `query($weight:Float!,$receiverCity:String!,$senderCity:String,$codAmount:Float,$deliveryType:String){ econtCalculateShipping(weight:$weight,receiverCity:$receiverCity,senderCity:$senderCity,codAmount:$codAmount,deliveryType:$deliveryType){ price currency deliveryDays } }`
+  try {
+    const res = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, variables: { weight: weight.value, receiverCity: receiverCity.value || '', senderCity: senderCity.value || '', codAmount: codAmount.value || 0, deliveryType: 'OFFICE_OFFICE' } })
+    })
+    const js = await res.json()
+    debugLog.value = JSON.stringify(js, null, 2)
+  } catch (e) {
+    debugLog.value = String(e)
+  }
+}
+
+async function debugSaveOffice() {
+  debugLog.value = 'Loading...'
+  const q = `mutation($orderId:Int!,$officeCode:String!,$officeName:String,$officeAddress:String,$officeCity:String){ saveEcontOfficeToOrder(input:{orderId:$orderId,officeCode:$officeCode,officeName:$officeName,officeAddress:$officeAddress,officeCity:$officeCity}){ success message } }`
+  try {
+    const res = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, variables: { orderId: orderId.value || 123, officeCode: selectedOffice.value?.code || '', officeName: selectedOffice.value?.name || '', officeAddress: selectedOffice.value?.address || '', officeCity: selectedOffice.value?.city || '' } })
+    })
+    const js = await res.json()
+    debugLog.value = JSON.stringify(js, null, 2)
+  } catch (e) {
+    debugLog.value = String(e)
+  }
+}
 <template>
   <div class="econt-test container">
     <h1>Econt integration test</h1>

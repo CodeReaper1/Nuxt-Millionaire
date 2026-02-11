@@ -1,0 +1,80 @@
+{
+  "info": {
+    "_postman_id": "econt-bridge-collection-001",
+    "name": "Econt Bridge GraphQL",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Econt Cities",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"query { econtCities { id name postCode regionName } }\"\n}"
+        },
+        "url": {
+          "raw": "{{WP_GRAPHQL_ENDPOINT}}",
+          "host": ["{{WP_GRAPHQL_ENDPOINT}}"]
+        }
+      }
+    },
+    {
+      "name": "Get Econt Offices",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"query($city:String){ econtOffices(city:$city){ id code name address city postCode latitude longitude } }\",\n  \"variables\": { \"city\": \"София\" }\n}"
+        },
+        "url": {
+          "raw": "{{WP_GRAPHQL_ENDPOINT}}",
+          "host": ["{{WP_GRAPHQL_ENDPOINT}}"]
+        }
+      }
+    },
+    {
+      "name": "Calculate Shipping",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"query($weight:Float!,$receiverCity:String!,$senderCity:String,$codAmount:Float,$deliveryType:String){ econtCalculateShipping(weight:$weight,receiverCity:$receiverCity,senderCity:$senderCity,codAmount:$codAmount,deliveryType:$deliveryType){ price currency deliveryDays } }\",\n  \"variables\": { \"weight\": 1.2, \"receiverCity\": \"София\", \"senderCity\": \"София\", \"codAmount\": 0, \"deliveryType\": \"OFFICE_OFFICE\" }\n}"
+        },
+        "url": {
+          "raw": "{{WP_GRAPHQL_ENDPOINT}}",
+          "host": ["{{WP_GRAPHQL_ENDPOINT}}"]
+        }
+      }
+    },
+    {
+      "name": "Save Econt Office to Order",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"mutation($orderId:Int!,$officeCode:String!,$officeName:String,$officeAddress:String,$officeCity:String){ saveEcontOfficeToOrder(input:{orderId:$orderId,officeCode:$officeCode,officeName:$officeName,officeAddress:$officeAddress,officeCity:$officeCity}){ success message } }\",\n  \"variables\": { \"orderId\": 123, \"officeCode\": \"1001\", \"officeName\": \"Еконт София Център\", \"officeAddress\": \"ул. Иван Вазов 1\", \"officeCity\": \"София\" }\n}"
+        },
+        "url": {
+          "raw": "{{WP_GRAPHQL_ENDPOINT}}",
+          "host": ["{{WP_GRAPHQL_ENDPOINT}}"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "WP_GRAPHQL_ENDPOINT", "value": "http://kokoschito.local/graphql" }
+  ]
+}
