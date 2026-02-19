@@ -1,10 +1,9 @@
 /**
  * Composable for Econt shipping integration.
  *
- * Provides reactive state and methods to:
- *  - Fetch Econt cities & offices via GraphQL
- *  - Track selected office
- *  - Build metaData entries for the checkout mutation
+ * Uses raw $fetch to the GraphQL endpoint instead of .gql files
+ * so that nuxt-graphql-client's build-time schema validation
+ * doesn't break when the WordPress plugin isn't installed yet.
  */
 export interface EcontOffice {
   id: string;
@@ -30,7 +29,77 @@ export interface EcontCity {
   regionName?: string;
 }
 
+// ── Inline GraphQL documents ────────────────────────────────────────
+
+const OFFICES_QUERY = `
+  query GetEcontOffices($city: String, $search: String) {
+    econtOffices(city: $city, search: $search) {
+      id code name nameEn address city postCode
+      latitude longitude
+      workingTimeFrom workingTimeTo
+      workingTimeHalfFrom workingTimeHalfTo
+    }
+  }
+`;
+
+const CITIES_QUERY = `
+  query GetEcontCities($search: String) {
+    econtCities(search: $search) {
+      id name nameEn postCode regionName
+    }
+  }
+`;
+
+const SAVE_OFFICE_MUTATION = `
+  mutation SaveEcontOffice(
+    $orderId: Int!
+    $officeCode: String!
+    $officeName: String
+    $officeAddress: String
+    $officeCity: String
+  ) {
+    saveEcontOfficeToOrder(input: {
+      orderId: $orderId
+      officeCode: $officeCode
+      officeName: $officeName
+      officeAddress: $officeAddress
+      officeCity: $officeCity
+    }) {
+      success
+      message
+    }
+  }
+`;
+
+// ── Helper: raw GraphQL fetch ───────────────────────────────────────
+
+async function gqlFetch<T = any>(
+  endpoint: string,
+  query: string,
+  variables: Record<string, any> = {},
+): Promise<T> {
+  const res = await $fetch<{ data: T; errors?: any[] }>(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { query, variables },
+  });
+
+  if (res.errors?.length) {
+    throw new Error(res.errors[0].message || 'GraphQL error');
+  }
+
+  return res.data;
+}
+
+// ── Composable ──────────────────────────────────────────────────────
+
 export function useEcont() {
+  const runtimeConfig = useRuntimeConfig();
+  const gqlHost: string =
+    (runtimeConfig.public as any)?.['graphql-client']?.clients?.default?.host
+    || (runtimeConfig.public as any)?.GQL_HOST
+    || '/graphql';
+
   // ── Reactive state ─────────────────────────────────────────────────
   const cities = useState<EcontCity[]>('econtCities', () => []);
   const offices = useState<EcontOffice[]>('econtOffices', () => []);
@@ -45,8 +114,10 @@ export function useEcont() {
     error.value = null;
 
     try {
-      const { econtCities } = await GqlGetEcontCities({ search: search || null });
-      cities.value = (econtCities as EcontCity[]) || [];
+      const data = await gqlFetch<{ econtCities: EcontCity[] }>(
+        gqlHost, CITIES_QUERY, { search: search || null },
+      );
+      cities.value = data.econtCities || [];
       return cities.value;
     } catch (e: any) {
       error.value = e.message || 'Failed to fetch cities';
@@ -63,11 +134,10 @@ export function useEcont() {
     error.value = null;
 
     try {
-      const { econtOffices } = await GqlGetEcontOffices({
-        city: city || null,
-        search: search || null,
-      });
-      offices.value = (econtOffices as EcontOffice[]) || [];
+      const data = await gqlFetch<{ econtOffices: EcontOffice[] }>(
+        gqlHost, OFFICES_QUERY, { city: city || null, search: search || null },
+      );
+      offices.value = data.econtOffices || [];
       return offices.value;
     } catch (e: any) {
       error.value = e.message || 'Failed to fetch offices';
@@ -91,12 +161,6 @@ export function useEcont() {
   }
 
   // ── Build checkout metaData entries ────────────────────────────────
-  /**
-   * Returns an array of { key, value } objects that should be merged
-   * into the checkout mutation's `metaData` array.
-   *
-   * Returns an empty array when no office is selected.
-   */
   function getCheckoutMetaData(): Array<{ key: string; value: string }> {
     if (!selectedOffice.value) return [];
 
@@ -125,14 +189,16 @@ export function useEcont() {
     if (!o) return false;
 
     try {
-      const { saveEcontOfficeToOrder } = await GqlSaveEcontOffice({
-        orderId,
-        officeCode: o.code || o.id,
-        officeName: o.name,
-        officeAddress: o.address,
-        officeCity: o.city,
-      });
-      return saveEcontOfficeToOrder?.success ?? false;
+      const data = await gqlFetch<{ saveEcontOfficeToOrder: { success: boolean } }>(
+        gqlHost, SAVE_OFFICE_MUTATION, {
+          orderId,
+          officeCode: o.code || o.id,
+          officeName: o.name,
+          officeAddress: o.address,
+          officeCity: o.city,
+        },
+      );
+      return data.saveEcontOfficeToOrder?.success ?? false;
     } catch (e: any) {
       console.error('[useEcont] saveOfficeToOrder error:', e);
       return false;
@@ -140,7 +206,6 @@ export function useEcont() {
   }
 
   return {
-    // State
     cities,
     offices,
     selectedOffice,
@@ -148,7 +213,6 @@ export function useEcont() {
     loading,
     error,
 
-    // Methods
     fetchCities,
     fetchOffices,
     selectOffice,

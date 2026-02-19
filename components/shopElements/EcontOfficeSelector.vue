@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { EcontOffice, EcontCity } from '~/app/composables/useEcont';
+import type { EcontOffice } from '~/app/composables/useEcont';
 
 const props = defineProps<{
   /** Currently selected office (v-model). */

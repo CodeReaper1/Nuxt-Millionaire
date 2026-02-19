@@ -1,9 +1,0 @@
-query GetEcontCities($search: String) {
-  econtCities(search: $search) {
-    id
-    name
-    nameEn
-    postCode
-    regionName
-  }
-}
