@@ -165,21 +165,23 @@ class Econt_Bridge_GraphQL {
         // ── econtCalculateShipping ──────────────────────────────────
         register_graphql_field( 'RootQuery', 'econtCalculateShipping', [
             'type'        => 'EcontShippingRate',
-            'description' => __( 'Calculate Econt shipping price.', 'econt-graphql-bridge' ),
+            'description' => __( 'Calculate Econt shipping price via LabelService (mode=calculate).', 'econt-graphql-bridge' ),
             'args'        => [
-                'weight'       => [ 'type' => [ 'non_null' => 'Float' ], 'description' => 'Weight in kg' ],
-                'receiverCity' => [ 'type' => [ 'non_null' => 'String' ], 'description' => 'Receiver city (Bulgarian)' ],
-                'senderCity'   => [ 'type' => 'String', 'description' => 'Sender city (defaults to store city)' ],
-                'codAmount'    => [ 'type' => 'Float',  'description' => 'Cash-on-delivery amount in BGN' ],
-                'deliveryType' => [ 'type' => 'String', 'description' => 'Tariff sub-code, e.g. OFFICE_OFFICE' ],
+                'weight'             => [ 'type' => [ 'non_null' => 'Float' ], 'description' => 'Weight in kg' ],
+                'receiverCity'       => [ 'type' => 'String', 'description' => 'Receiver city name (Bulgarian). Required if receiverOfficeCode is not set.' ],
+                'senderCity'         => [ 'type' => 'String', 'description' => 'Sender city (defaults to store city)' ],
+                'senderOfficeCode'   => [ 'type' => 'String', 'description' => 'Sender office code (for office-to-office)' ],
+                'receiverOfficeCode' => [ 'type' => 'String', 'description' => 'Receiver office code (for office-to-office)' ],
+                'codAmount'          => [ 'type' => 'Float',  'description' => 'Cash-on-delivery amount in EUR' ],
             ],
             'resolve'     => function ( $root, array $args ) {
                 $params = [
-                    'weight'        => $args['weight'],
-                    'sender_city'   => $args['senderCity'] ?? $this->api->get_sender_city(),
-                    'receiver_city' => $args['receiverCity'],
-                    'delivery_type' => $args['deliveryType'] ?? 'OFFICE_OFFICE',
-                    'cod_amount'    => $args['codAmount'] ?? 0,
+                    'weight'              => $args['weight'],
+                    'sender_city'         => $args['senderCity'] ?? $this->api->get_sender_city(),
+                    'receiver_city'       => $args['receiverCity'] ?? '',
+                    'sender_office_code'  => $args['senderOfficeCode'] ?? null,
+                    'receiver_office_code'=> $args['receiverOfficeCode'] ?? null,
+                    'cod_amount'          => $args['codAmount'] ?? 0,
                 ];
 
                 $result = $this->api->calculate_shipping( $params );
@@ -189,8 +191,8 @@ class Econt_Bridge_GraphQL {
                 }
 
                 return [
-                    'price'        => (float) ( $result['price'] ?? 0 ),
-                    'currency'     => $result['currency'] ?? 'BGN',
+                    'price'        => isset( $result['price'] ) ? (float) $result['price'] : 0,
+                    'currency'     => $result['currency'] ?? 'EUR',
                     'deliveryDays' => isset( $result['delivery_days'] ) ? (int) $result['delivery_days'] : null,
                 ];
             },

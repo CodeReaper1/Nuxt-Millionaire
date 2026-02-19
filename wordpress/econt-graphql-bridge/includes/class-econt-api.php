@@ -187,40 +187,119 @@ class Econt_Bridge_API {
     /**
      * Calculate Econt shipping price.
      *
+     * Uses LabelService.createLabel with mode=calculate, which is the
+     * official way to get a price estimate from the Econt API.
+     *
      * @param array $params {
-     *     @type float  $weight        Package weight in kg.
-     *     @type string $sender_city   Sender city name.
-     *     @type string $receiver_city Receiver city name.
-     *     @type string $delivery_type Tariff sub-code (default OFFICE_OFFICE).
-     *     @type float  $cod_amount    Cash-on-delivery amount (default 0).
+     *     @type float       $weight             Package weight in kg.
+     *     @type string      $sender_city        Sender city name (Bulgarian).
+     *     @type string|null $sender_office_code  Sender office code (for office-to-office).
+     *     @type string      $receiver_city       Receiver city name (Bulgarian).
+     *     @type string|null $receiver_office_code Receiver office code (for office-to-office).
+     *     @type float       $cod_amount          Cash-on-delivery amount (default 0).
      * }
      * @return array|false { price, currency, delivery_days } or false.
      */
     public function calculate_shipping( array $params ) {
-        $data = [
-            'shipmentType'   => 'PACK',
-            'weight'         => (float) ( $params['weight'] ?? 1 ),
-            'senderCity'     => $params['sender_city'] ?? '',
-            'receiverCity'   => $params['receiver_city'] ?? '',
-            'tariffSubCode'  => $params['delivery_type'] ?? 'OFFICE_OFFICE',
+        $label = [
+            'shipmentType' => 'pack',
+            'weight'       => (float) ( $params['weight'] ?? 1 ),
+            'packCount'    => 1,
         ];
 
-        if ( ! empty( $params['cod_amount'] ) && (float) $params['cod_amount'] > 0 ) {
-            $data['cdAmount']   = (float) $params['cod_amount'];
-            $data['cdCurrency'] = 'BGN';
-        }
+        // Econt requires sender/receiver client info even for price estimates.
+        $label['senderClient'] = [
+            'name'   => get_option( 'blogname', 'Store' ),
+            'phones' => [ get_option( 'woocommerce_store_phone', '0000000000' ) ?: '0000000000' ],
+        ];
+        $label['receiverClient'] = [
+            'name'   => 'Customer',
+            'phones' => [ '0000000000' ],
+        ];
 
-        $response = $this->request( 'Calculating/CalculatingService.calculatePrice.json', $data );
+        $sender_city   = $params['sender_city'] ?? $this->get_sender_city();
+        $receiver_city = $params['receiver_city'] ?? '';
 
-        if ( $response && isset( $response['price'] ) ) {
-            return [
-                'price'         => $response['price']['total'] ?? null,
-                'currency'      => $response['price']['currency'] ?? 'BGN',
-                'delivery_days' => $response['deliveryDays'] ?? null,
+        if ( ! empty( $params['sender_office_code'] ) ) {
+            $label['senderOfficeCode'] = $params['sender_office_code'];
+        } else {
+            $label['senderAddress'] = [
+                'city' => [
+                    'name'    => $sender_city,
+                    'country' => [ 'code3' => 'BGR' ],
+                ],
             ];
         }
 
+        if ( ! empty( $params['receiver_office_code'] ) ) {
+            $label['receiverOfficeCode'] = $params['receiver_office_code'];
+        } else {
+            $label['receiverAddress'] = [
+                'city' => [
+                    'name'    => $receiver_city,
+                    'country' => [ 'code3' => 'BGR' ],
+                ],
+            ];
+        }
+
+        $services = [];
+        if ( ! empty( $params['cod_amount'] ) && (float) $params['cod_amount'] > 0 ) {
+            $services['cdAmount']   = (float) $params['cod_amount'];
+            $services['cdCurrency'] = 'EUR';
+            $services['cdType']     = 'get';
+        }
+        if ( ! empty( $services ) ) {
+            $label['services'] = $services;
+        }
+
+        $data = [
+            'label' => $label,
+            'mode'  => 'calculate',
+        ];
+
+        $response = $this->request( 'Shipments/LabelService.createLabel.json', $data );
+
+        if ( $response && isset( $response['label'] ) ) {
+            $result_label = $response['label'];
+            return [
+                'price'         => isset( $result_label['totalPrice'] ) ? (float) $result_label['totalPrice'] : null,
+                'currency'      => $result_label['currency'] ?? 'EUR',
+                'delivery_days' => isset( $result_label['expectedDeliveryDate'] )
+                                        ? $this->estimate_delivery_days( $result_label['expectedDeliveryDate'] )
+                                        : null,
+            ];
+        }
+
+        if ( $response && isset( $response['type'] ) ) {
+            error_log( 'Econt calculate_shipping error: ' . wp_json_encode( $response ) );
+        }
+
         return false;
+    }
+
+    /**
+     * Estimate delivery days from an Econt timestamp (milliseconds since epoch)
+     * or a date string.
+     *
+     * @param int|string $date_value  Millisecond timestamp or date string.
+     */
+    private function estimate_delivery_days( $date_value ): ?int {
+        try {
+            $tz  = new \DateTimeZone( 'Europe/Sofia' );
+            $now = new \DateTime( 'today', $tz );
+
+            if ( is_numeric( $date_value ) ) {
+                $delivery = ( new \DateTime() )->setTimezone( $tz );
+                $delivery->setTimestamp( (int) ( $date_value / 1000 ) );
+            } else {
+                $delivery = new \DateTime( (string) $date_value, $tz );
+            }
+
+            $diff = $now->diff( $delivery );
+            return max( (int) $diff->days, 1 );
+        } catch ( \Exception $e ) {
+            return null;
+        }
     }
 
     /**

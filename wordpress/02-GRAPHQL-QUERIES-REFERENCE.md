@@ -78,22 +78,24 @@ query GetEcontCities($search: String) {
 
 ### 3. Calculate shipping price
 
-Get a real-time shipping quote from Econt.
+Get a real-time shipping quote from Econt. Uses the Econt `LabelService.createLabel` API with `mode=calculate` under the hood.
 
 ```graphql
 query CalculateEcontShipping(
   $weight: Float!
-  $receiverCity: String!
+  $receiverCity: String
   $senderCity: String
+  $senderOfficeCode: String
+  $receiverOfficeCode: String
   $codAmount: Float
-  $deliveryType: String
 ) {
   econtCalculateShipping(
     weight: $weight
     receiverCity: $receiverCity
     senderCity: $senderCity
+    senderOfficeCode: $senderOfficeCode
+    receiverOfficeCode: $receiverOfficeCode
     codAmount: $codAmount
-    deliveryType: $deliveryType
   ) {
     price
     currency
@@ -102,22 +104,40 @@ query CalculateEcontShipping(
 }
 ```
 
-**Variables:**
+**Example 1 — Office-to-office by office codes:**
+
+```json
+{
+  "weight": 1.5,
+  "receiverOfficeCode": "7538"
+}
+```
+
+**Example 2 — City-to-office:**
 
 ```json
 {
   "weight": 2.0,
-  "receiverCity": "Пловдив",
   "senderCity": "София",
-  "codAmount": 0,
-  "deliveryType": "OFFICE_OFFICE"
+  "receiverOfficeCode": "7538"
+}
+```
+
+**Example 3 — With COD:**
+
+```json
+{
+  "weight": 3.0,
+  "receiverOfficeCode": "7538",
+  "codAmount": 50.0
 }
 ```
 
 **Notes:**
 - `senderCity` defaults to the sender city configured in the bridge plugin settings (`econt_gql_bridge_sender_city`, default: "София").
-- `deliveryType` accepts: `OFFICE_OFFICE`, `OFFICE_DOOR`, `DOOR_OFFICE`, `DOOR_DOOR`.
-- Returns `null` if the API call fails.
+- You can provide either `receiverOfficeCode` (for office delivery) or `receiverCity` (for address delivery).
+- `codAmount` is in EUR (Econt switched to EUR from 01.01.2026).
+- Returns `null` if the API call fails — check WordPress error log for details.
 
 ---
 

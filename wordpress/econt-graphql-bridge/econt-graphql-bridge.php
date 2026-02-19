@@ -109,6 +109,29 @@ final class Econt_GraphQL_Bridge {
     }
 
     /**
+     * Detect whether "Bulgarisation for WooCommerce" (or a compatible variant) is active.
+     */
+    private function is_bulgarisation_active(): bool {
+        // Check for the main class shipped by known Bulgarisation builds.
+        if ( class_exists( 'Woo_BG' ) || class_exists( 'WooBG' ) || class_exists( 'Woo_Bg_Bulgaria' ) ) {
+            return true;
+        }
+
+        // Fallback: look for any active plugin whose folder starts with "woo-bg" or "bulgarisation".
+        if ( ! function_exists( 'get_option' ) ) {
+            return false;
+        }
+        $active = (array) get_option( 'active_plugins', [] );
+        foreach ( $active as $plugin ) {
+            if ( preg_match( '#^(woo-bg|bulgarisation)#i', $plugin ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Load required PHP files.
      */
     private function includes(): void {
