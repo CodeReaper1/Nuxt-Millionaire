@@ -1,0 +1,6 @@
+mutation applyReferralCode($code: String!) {
+  applyReferralCode(input: { code: $code }) {
+    success
+    message
+  }
+}

@@ -1,0 +1,15 @@
+fragment LoyaltyBalance on LoyaltyBalance {
+  points
+  tier
+  tierName
+  tierMultiplier
+  lifetimePoints
+  nextTier {
+    slug
+    name
+    minPoints
+    multiplier
+  }
+  nextTierPoints
+  referralCode
+}

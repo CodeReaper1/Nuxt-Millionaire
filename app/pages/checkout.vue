@@ -1,0 +1,430 @@
+<script setup lang="ts">
+import { loadStripe } from '@stripe/stripe-js';
+import type { Stripe, StripeElements, CreateSourceData, StripeCardElement } from '@stripe/stripe-js';
+
+const { t } = useI18n();
+const { query } = useRoute();
+const { cart, isUpdatingCart, paymentGateways, emptyCart, refreshCart } = useCart();
+const { customer, viewer, navigateToLogin } = useAuth();
+const { orderInput, isProcessingOrder, processCheckout } = useCheckout();
+const { selectedOffice, isEcontShippingMethod, getCheckoutMetaData } = useEcont();
+const runtimeConfig = useRuntimeConfig();
+const appConfig = useAppConfig();
+const stripeKey = runtimeConfig.public?.STRIPE_PUBLISHABLE_KEY || null;
+
+const isEcontSelected = computed(() => {
+  const chosen = cart.value?.chosenShippingMethods?.[0];
+  return isEcontShippingMethod(chosen);
+});
+
+const buttonText = ref<string>(isProcessingOrder.value ? t('general.processing') : t('shop.checkoutButton'));
+const isStripeElementReady = ref<boolean>(false);
+const stripeClientSecret = ref<string>('');
+
+const isCheckoutDisabled = computed<boolean>(() => {
+  if (isProcessingOrder.value || isUpdatingCart.value || !orderInput.value.paymentMethod) return true;
+
+  if (orderInput.value.paymentMethod?.id === 'stripe') {
+    return !isStripeElementReady.value;
+  }
+
+  if (isEcontSelected.value && !selectedOffice.value) {
+    return true;
+  }
+
+  return false;
+});
+
+const isInvalidEmail = ref<boolean>(false);
+const stripe: Stripe | null = stripeKey ? await loadStripe(stripeKey) : null;
+const elements = ref();
+const isPaid = ref<boolean>(false);
+
+const shipToDifferentAddress = computed<boolean>({
+  get: () => !!orderInput.value.shipToDifferentAddress,
+  set: (value) => {
+    orderInput.value.shipToDifferentAddress = value;
+  },
+});
+const isEditingShipping = ref<boolean>(false);
+const isEditingBilling = ref<boolean>(false);
+
+const editShippingAddress = () => {
+  isEditingShipping.value = true;
+};
+
+const editBillingAddress = () => {
+  isEditingBilling.value = true;
+};
+
+watch(shipToDifferentAddress, (newValue) => {
+  if (newValue && customer.value?.shipping && customer.value?.billing) {
+    Object.assign(customer.value.billing, {
+      ...customer.value.shipping,
+      email: customer.value.billing.email,
+    });
+  }
+});
+
+onBeforeMount(async () => {
+  if (query.cancel_order) window.close();
+
+  if (cart.value?.availableShippingMethods?.length && customer.value && !customer.value.shipping) {
+    if (customer.value.billing) {
+      customer.value.shipping = { ...customer.value.billing };
+    }
+  }
+
+  if (!viewer.value && customer.value?.shipping && !hasAnyShippingInfo.value) {
+    isEditingShipping.value = true;
+  }
+});
+
+const hasAnyShippingInfo = computed(() => {
+  const shipping = customer.value?.shipping;
+  if (!shipping) return false;
+  return !!(shipping.firstName || shipping.lastName || shipping.address1 || shipping.city || shipping.country);
+});
+
+const payNow = async () => {
+  buttonText.value = t('general.processing');
+
+  try {
+    if (orderInput.value.paymentMethod.id === 'stripe' && stripe && elements.value) {
+      const paymentMethodType = appConfig.stripePaymentMethod || 'payment';
+
+      if (paymentMethodType === 'payment') {
+        if (!stripeClientSecret.value) {
+          throw new Error('Payment intent not available. Please refresh and try again.');
+        }
+
+        const { error: submitError } = await elements.value.submit();
+        if (submitError) {
+          console.error('Form validation failed:', submitError);
+          throw new Error(submitError.message);
+        }
+
+        const { error, paymentIntent } = await stripe.confirmPayment({
+          elements: elements.value,
+          clientSecret: stripeClientSecret.value,
+          confirmParams: {
+            return_url: `${window.location.origin}/checkout/order-received`,
+            payment_method_data: {
+              billing_details: {
+                name: `${customer.value?.billing?.firstName || ''} ${customer.value?.billing?.lastName || ''}`.trim() || undefined,
+                email: customer.value?.billing?.email || undefined,
+                phone: customer.value?.billing?.phone || undefined,
+                address: {
+                  line1: customer.value?.billing?.address1 || undefined,
+                  line2: customer.value?.billing?.address2 || undefined,
+                  city: customer.value?.billing?.city || undefined,
+                  state: customer.value?.billing?.state || undefined,
+                  postal_code: customer.value?.billing?.postcode || undefined,
+                  country: customer.value?.billing?.country || undefined,
+                },
+              },
+            },
+          },
+          redirect: 'if_required',
+        });
+
+        if (error) {
+          console.error('Payment failed:', error);
+          throw new Error(error.message);
+        }
+
+        if (paymentIntent) {
+          orderInput.value.metaData.push({ key: '_stripe_payment_intent_id', value: paymentIntent.id });
+
+          if (paymentIntent.payment_method) {
+            orderInput.value.metaData.push({ key: '_stripe_payment_method_id', value: paymentIntent.payment_method });
+          }
+
+          orderInput.value.metaData.push({ key: '_stripe_source_id', value: paymentIntent.id });
+          orderInput.value.metaData.push({ key: '_stripe_fee', value: '0' });
+          orderInput.value.metaData.push({ key: '_stripe_net', value: paymentIntent.amount.toString() });
+          orderInput.value.metaData.push({ key: '_stripe_currency', value: paymentIntent.currency });
+          orderInput.value.metaData.push({ key: '_stripe_charge_captured', value: 'yes' });
+          orderInput.value.metaData.push({ key: '_wc_stripe_payment_method_type', value: 'card' });
+
+          isPaid.value = paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing';
+          orderInput.value.transactionId = paymentIntent.id;
+        }
+      } else {
+        let clientSecret = '';
+
+        try {
+          const { stripePaymentIntent } = await GqlGetStripePaymentIntent({
+            stripePaymentMethod: 'SETUP' as any,
+          });
+          clientSecret = stripePaymentIntent?.clientSecret || '';
+        } catch (stripeError) {
+          console.error('Error getting Stripe setup intent:', stripeError);
+        }
+
+        const cardElement = elements.value.getElement('card') as StripeCardElement;
+
+        if (clientSecret) {
+          const { setupIntent } = await stripe.confirmCardSetup(clientSecret, { payment_method: { card: cardElement } });
+          if (setupIntent) orderInput.value.metaData.push({ key: '_stripe_intent_id', value: setupIntent.id });
+          isPaid.value = setupIntent?.status === 'succeeded' || false;
+          orderInput.value.transactionId = setupIntent?.id || new Date().getTime().toString();
+        } else {
+          const { source } = await stripe.createSource(cardElement as CreateSourceData);
+          if (source) {
+            orderInput.value.metaData.push({ key: '_stripe_source_id', value: source.id });
+            orderInput.value.transactionId = source.created?.toString() || new Date().getTime().toString();
+            isPaid.value = true;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Checkout error:', error);
+
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred during checkout';
+
+    alert(`Payment failed: ${errorMessage}. Please try again or contact support.`);
+
+    buttonText.value = t('shop.placeOrder');
+    return;
+  }
+
+  const result = await processCheckout(isPaid.value);
+
+  if (isPaid.value && result) {
+    await emptyCart();
+    await refreshCart();
+  }
+};
+
+const handleStripeElement = (stripeElements: StripeElements): void => {
+  elements.value = stripeElements;
+
+  const paymentMethodType = appConfig.stripePaymentMethod || 'payment';
+
+  if (paymentMethodType === 'payment') {
+    const paymentElement = stripeElements.getElement('payment');
+    if (paymentElement) {
+      paymentElement.on('change', (event) => {
+        isStripeElementReady.value = event.complete;
+      });
+      isStripeElementReady.value = false;
+    }
+  } else {
+    const cardElement = stripeElements.getElement('card');
+    if (cardElement) {
+      cardElement.on('change', (event) => {
+        isStripeElementReady.value = event.complete && !event.error;
+      });
+      isStripeElementReady.value = false;
+    }
+  }
+};
+
+const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$/;
+
+const checkEmailOnBlur = (email?: string | null): void => {
+  if (email) isInvalidEmail.value = !emailRegex.test(email);
+};
+
+const checkEmailOnInput = (email?: string | null): void => {
+  if (email && isInvalidEmail.value) isInvalidEmail.value = false;
+};
+
+watch(
+  () => orderInput.value.paymentMethod?.id,
+  async (paymentMethodId) => {
+    if (paymentMethodId === 'stripe' && appConfig.stripePaymentMethod === 'payment') {
+      try {
+        const { stripePaymentIntent } = await GqlGetStripePaymentIntent({
+          stripePaymentMethod: 'PAYMENT' as any,
+        });
+        stripeClientSecret.value = stripePaymentIntent?.clientSecret || '';
+      } catch (error) {
+        console.error('Failed to get client secret for Payment Element:', error);
+        stripeClientSecret.value = '';
+      }
+    } else {
+      stripeClientSecret.value = '';
+    }
+  },
+  { immediate: true },
+);
+
+useSeoMeta({
+  title: t('shop.checkout'),
+});
+</script>
+
+<template>
+  <div class="flex flex-col min-h-150">
+    <template v-if="cart && customer">
+      <div v-if="cart.isEmpty" class="flex flex-col items-center justify-center flex-1 mb-12">
+        <Icon name="ion:cart-outline" size="156" class="opacity-25 mb-5" />
+        <h2 class="text-2xl font-bold mb-2">{{ $t('shop.cartEmpty') }}</h2>
+        <span class="text-gray-400 mb-4">{{ $t('shop.addProductsInYourCart') }}</span>
+        <NuxtLink
+          to="/products"
+          class="flex items-center justify-center gap-3 p-2 px-3 mt-4 font-semibold text-center text-white rounded-lg shadow-lg bg-primary hover:bg-primary-dark">
+          {{ $t('shop.browseOurProducts') }}
+        </NuxtLink>
+      </div>
+
+      <form v-else class="container flex flex-wrap items-start gap-8 my-16 justify-evenly lg:gap-20" @submit.prevent="payNow">
+        <div class="grid w-full max-w-2xl gap-8 wn-form md:flex-1">
+          <!-- Customer details -->
+          <div v-if="!viewer && customer?.billing">
+            <h2 class="w-full mb-2 text-2xl font-semibold leading-none dark:text-white">Contact Information</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Already have an account? <NuxtLink to="/my-account" @click="navigateToLogin('/checkout')" class="text-primary text-semibold">Log in</NuxtLink>.
+            </p>
+            <div class="w-full mt-4">
+              <label for="email">{{ $t('billing.email') }}</label>
+              <input
+                v-model="customer.billing.email"
+                placeholder="johndoe@email.com"
+                autocomplete="email"
+                type="email"
+                name="email"
+                :class="{ 'has-error': isInvalidEmail }"
+                @blur="checkEmailOnBlur(customer.billing.email)"
+                @input="checkEmailOnInput(customer.billing.email)"
+                required />
+              <Transition name="scale-y" mode="out-in">
+                <div v-if="isInvalidEmail" class="mt-1 text-sm text-red-500">Invalid email address</div>
+              </Transition>
+            </div>
+            <template v-if="orderInput.createAccount">
+              <div class="w-full mt-4">
+                <label for="username">{{ $t('account.username') }}</label>
+                <input v-model="orderInput.username" placeholder="johndoe" autocomplete="username" type="text" name="username" required />
+              </div>
+              <div class="w-full my-2" v-if="orderInput.createAccount">
+                <label for="email">{{ $t('account.password') }}</label>
+                <PasswordInput id="password" class="my-2" v-model="orderInput.password" placeholder="••••••••••" :required="true" />
+              </div>
+            </template>
+            <div v-if="!viewer" class="flex items-center gap-2 my-2">
+              <label for="creat-account">Create an account?</label>
+              <input id="creat-account" v-model="orderInput.createAccount" type="checkbox" name="creat-account" />
+            </div>
+          </div>
+
+          <!-- Shipping Address Section -->
+          <div v-if="cart?.availableShippingMethods?.length">
+            <h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-4 leading-none">Billing</h2>
+
+            <div v-if="!isEditingShipping" class="space-y-4">
+              <AddressSummary :address="customer?.shipping" :show-validation-warnings="!!viewer" @edit="editShippingAddress" />
+
+              <div class="flex items-center gap-3">
+                <input
+                  id="useSameAddress"
+                  v-model="shipToDifferentAddress"
+                  type="checkbox"
+                  name="useSameAddress"
+                  class="w-4 h-4 text-primary bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-sm focus:ring-3 focus:ring-primary" />
+                <label for="useSameAddress" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ $t('billing.differentAddress') }}
+                </label>
+              </div>
+            </div>
+
+            <div v-else class="space-y-6">
+              <div>
+                <ShippingDetails v-if="customer?.shipping" v-model="customer.shipping" />
+              </div>
+
+              <div class="flex items-center gap-3">
+                <input
+                  id="useSameAddressEdit"
+                  v-model="shipToDifferentAddress"
+                  type="checkbox"
+                  name="useSameAddressEdit"
+                  class="w-4 h-4 text-primary bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-sm focus:ring-3 focus:ring-primary" />
+                <label for="useSameAddressEdit" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ $t('billing.differentAddress') }}
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="shipToDifferentAddress">
+            <div class="mb-6">
+              <h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2 leading-none">Shipping Address</h2>
+            </div>
+            <BillingDetails v-if="customer?.billing" v-model="customer.billing" />
+          </div>
+          <div v-if="!cart?.availableShippingMethods?.length">
+            <h2 class="w-full mb-3 text-2xl font-semibold dark:text-white">{{ $t('billing.billingDetails') }}</h2>
+            <BillingDetails v-if="customer?.billing" v-model="customer.billing" />
+          </div>
+
+          <hr class="border-gray-300 dark:border-gray-600" />
+
+          <!-- Shipping methods -->
+          <div v-if="cart?.availableShippingMethods?.length">
+            <h3 class="mb-4 text-xl font-semibold leading-none dark:text-white">{{ $t('general.shippingSelect') }}</h3>
+            <ShippingOptions
+              v-if="cart.availableShippingMethods[0]?.rates && cart.chosenShippingMethods?.[0]"
+              :options="cart.availableShippingMethods[0].rates"
+              :active-option="cart.chosenShippingMethods[0]" />
+          </div>
+
+          <!-- Econt office selector -->
+          <div v-if="isEcontSelected">
+            <EcontOfficeSelector v-model="selectedOffice" />
+          </div>
+
+          <hr class="border-gray-300 dark:border-gray-600" />
+
+          <!-- Pay methods -->
+          <div v-if="paymentGateways?.nodes.length" class="mt-2 col-span-full">
+            <h2 class="mb-4 text-xl font-semibold leading-none dark:text-white">{{ $t('billing.paymentOptions') }}</h2>
+            <PaymentOptions v-model="orderInput.paymentMethod" class="mb-4" :paymentGateways />
+            <StripeElement v-if="stripe" v-show="orderInput.paymentMethod.id == 'stripe'" :stripe @updateElement="handleStripeElement" />
+          </div>
+
+          <hr class="border-gray-300 dark:border-gray-600" />
+
+          <!-- Order note -->
+          <div>
+            <h2 class="mb-4 text-xl font-semibold leading-none dark:text-white">{{ $t('shop.orderNote') }} ({{ $t('general.optional') }})</h2>
+            <textarea
+              id="order-note"
+              v-model="orderInput.customerNote"
+              name="order-note"
+              class="w-full min-h-25"
+              rows="4"
+              :placeholder="$t('shop.orderNotePlaceholder')"></textarea>
+          </div>
+        </div>
+
+        <OrderSummary>
+          <!-- Loyalty Points Checkout Integration -->
+          <LoyaltyCheckout />
+
+          <Button :loading="isProcessingOrder" :disabled="isCheckoutDisabled" size="lg" type="submit" class="w-full mt-4">
+            {{ buttonText }}
+          </Button>
+        </OrderSummary>
+      </form>
+    </template>
+    <LoadingIcon v-else class="m-auto" />
+  </div>
+</template>
+
+<style>
+.scale-y-enter-active,
+.scale-y-leave-active {
+  transition: all 0.2s ease-in-out;
+}
+
+.scale-y-enter-from,
+.scale-y-leave-to {
+  opacity: 0;
+  transform: scaleY(0);
+  transform-origin: top;
+}
+</style>

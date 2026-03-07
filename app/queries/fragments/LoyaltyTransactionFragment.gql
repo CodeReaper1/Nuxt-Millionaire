@@ -1,0 +1,9 @@
+fragment LoyaltyTransaction on LoyaltyTransaction {
+  id
+  points
+  type
+  description
+  referenceId
+  createdAt
+  expiresAt
+}

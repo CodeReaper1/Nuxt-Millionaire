@@ -1,0 +1,9 @@
+query getLoyaltyHistory($first: Int = 20, $offset: Int = 0) {
+  loyaltyHistory(first: $first, offset: $offset) {
+    nodes {
+      ...LoyaltyTransaction
+    }
+    totalCount
+    hasMore
+  }
+}

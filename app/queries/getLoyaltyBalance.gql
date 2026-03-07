@@ -1,0 +1,21 @@
+query getLoyaltyBalance {
+  loyaltyBalance {
+    ...LoyaltyBalance
+  }
+  loyaltySettings {
+    pointsPerCurrency
+    redemptionRate
+    maxDiscountPercentage
+    registrationBonus
+    reviewBonus
+    referralBonusReferrer
+    referralBonusReferee
+    expirationDays
+    tiers {
+      slug
+      name
+      minPoints
+      multiplier
+    }
+  }
+}

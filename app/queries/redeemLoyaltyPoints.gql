@@ -1,0 +1,8 @@
+mutation redeemLoyaltyPoints($points: Int!) {
+  redeemLoyaltyPoints(input: { points: $points }) {
+    success
+    message
+    couponCode
+    discountAmount
+  }
+}
